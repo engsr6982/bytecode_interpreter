@@ -299,6 +299,40 @@ typedef struct CallFrame {
   int handler_count;          // 异常处理数量
 } CallFrame;
 
+// ==========================================
+// 哈希桶
+// ==========================================
+typedef struct HashTableEntry {
+  ObjString *key; // 键
+  Value value;    // 值
+
+  struct HashTableEntry *next; // 链表
+} HashTableEntry;
+
+typedef struct HashTable {
+  HashTableEntry **buckets; // 哈希桶(指针数组,每个元素为链表头指针)
+  int count;                // 当前元素个数
+  int capacity;             // 桶的数量
+} HashTable;
+
+size_t fnv1a_hash_str(const char *key);
+size_t fnv1a_hash_str_len(const char *key, int len);
+size_t fnv1a_hash_obj_str(ObjString *key);
+void vm_ensure_obj_str_hashed(ObjString *key);
+
+HashTable *hash_table_new();
+void hash_table_free(HashTable *tab);
+bool hash_table_clear(HashTable *tab);
+
+bool hash_table_get(HashTable *tab, ObjString *key, Value *out);
+
+bool hash_table_put(HashTable *tab, ObjString *key, Value value);
+
+void hash_table_remove(HashTable *tab, ObjString *key);
+
+// ==========================================
+// 运行时
+// ==========================================
 typedef struct Runtime {
   Object *gc_objects;       // GC 链表
   size_t bytes_allocated;   // 已分配的字节数
@@ -318,7 +352,7 @@ typedef struct Context {
 
   // TODO: HasheTable // 全局环境
 
-  Value *stack;       // 数据栈(堆, malloc(stack_capacity * sizeof(Value))
+  Value *stack;       // 数据栈(堆, calloc(stack_capacity, sizeof(Value))
   int stack_capacity; // 栈容量
   int sp;             // 栈指针, 指向下一个可用的栈帧(空)
 

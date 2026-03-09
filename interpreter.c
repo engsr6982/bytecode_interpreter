@@ -1,9 +1,231 @@
 #include "interpreter.h"
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// ==========================================
+// 哈希表实现
+// ==========================================
+
+// fnv1a
+#define FNV_OFFSET_BASIS 0x811c9dc5 // 常数
+#define FNV_PRIME 0x01000193        // 质数
+
+size_t fnv1a_hash_str(const char *key) {
+  size_t hash = FNV_OFFSET_BASIS;
+  while (*key) {
+    hash ^= *key++;
+    hash *= FNV_PRIME;
+  }
+  return hash;
+}
+size_t fnv1a_hash_str_len(const char *key, int len) {
+  size_t hash = FNV_OFFSET_BASIS;
+  for (int i = 0; i < len; i++) {
+    hash ^= key[i];
+    hash *= FNV_PRIME;
+  }
+  return hash;
+}
+size_t fnv1a_hash_obj_str(ObjString *key) {
+  assert(key != NULL);
+  vm_ensure_obj_str_hashed(key);
+  return key->hash;
+}
+void vm_ensure_obj_str_hashed(ObjString *key) {
+  if (key->hash == 0) {
+    key->hash = fnv1a_hash_str_len(key->data, key->length);
+  }
+}
+
+HashTable *hash_table_new() {
+  HashTable *tab = calloc(1, sizeof(HashTable));
+  if (tab == NULL) {
+    return NULL;
+  }
+
+  tab->capacity = 16; // 初始容量
+  tab->count = 0;
+  tab->buckets = calloc(tab->capacity, sizeof(HashTableEntry));
+
+  if (tab->buckets == NULL) {
+    free(tab);
+    return NULL;
+  }
+  return tab;
+}
+void hash_table_free(HashTable *tab) {
+  if (tab == NULL)
+    return;
+
+  // 释放所有 entry
+  for (int i = 0; i < tab->capacity; i++) {
+    HashTableEntry *entry = tab->buckets[i];
+    while (entry != NULL) {
+      HashTableEntry *next = entry->next;
+      free(entry); // 只释放 entry 本身，key 由 GC 管理
+      entry = next;
+    }
+  }
+
+  free(tab->buckets);
+  free(tab);
+}
+bool hash_table_clear(HashTable *tab) {
+  if (tab == NULL)
+    return false;
+
+  for (int i = 0; i < tab->capacity; i++) {
+    HashTableEntry *entry = tab->buckets[i];
+    while (entry != NULL) {
+      HashTableEntry *next = entry->next;
+      free(entry);
+      entry = next;
+    }
+    tab->buckets[i] = NULL;
+  }
+
+  tab->count = 0;
+  return true;
+}
+
+static HashTableEntry *hash_table_find_entry(HashTable *tab, ObjString *key) {
+  vm_ensure_obj_str_hashed(key);
+  size_t hash = key->hash;
+
+  int idx = hash % tab->capacity;
+
+  // 遍历链表查找
+  HashTableEntry *entry = tab->buckets[idx];
+  while (entry != NULL) {
+    // 比较哈希值（快速过滤）
+    if (entry->key->hash == hash) {
+      // 再比较字符串内容（防止哈希冲突）
+      if (entry->key->length == key->length &&
+          memcmp(entry->key->data, key->data, key->length) == 0) {
+        return entry;
+      }
+    }
+    entry = entry->next;
+  }
+
+  return NULL;
+}
+
+bool hash_table_get(HashTable *tab, ObjString *key, Value *out) {
+  if (tab == NULL || key == NULL)
+    return false;
+
+  HashTableEntry *entry = hash_table_find_entry(tab, key);
+  if (entry != NULL) {
+    if (out)
+      *out = entry->value;
+    return true;
+  }
+
+  return false;
+}
+
+// 扩容
+static void hash_table_grow(HashTable *tab) {
+  int old_capacity = tab->capacity;
+  HashTableEntry **old_buckets = tab->buckets;
+
+  // 新容量翻倍
+  tab->capacity = old_capacity * 2;
+  tab->buckets = calloc(tab->capacity, sizeof(HashTableEntry *));
+  tab->count = 0;
+
+  // 重新哈希所有 entry
+  for (int i = 0; i < old_capacity; i++) {
+    HashTableEntry *entry = old_buckets[i];
+    while (entry != NULL) {
+      HashTableEntry *next = entry->next;
+
+      // 重新插入
+      int new_idx = entry->key->hash % tab->capacity;
+      entry->next = tab->buckets[new_idx];
+      tab->buckets[new_idx] = entry;
+      tab->count++;
+
+      entry = next;
+    }
+  }
+
+  free(old_buckets);
+}
+
+bool hash_table_put(HashTable *tab, ObjString *key, Value value) {
+  if (tab == NULL || key == NULL)
+    return false;
+
+  HashTableEntry *existing = hash_table_find_entry(tab, key);
+  if (existing != NULL) {
+    existing->value = value; // 更新现有键
+    return true;
+  }
+
+  // 检查是否需要扩容（负载因子 0.75）
+  if (tab->count >= tab->capacity * 0.75) {
+    hash_table_grow(tab);
+  }
+
+  // 计算索引
+  int idx = key->hash % tab->capacity;
+
+  // 创建新 entry
+  HashTableEntry *new_entry = malloc(sizeof(HashTableEntry));
+  if (new_entry == NULL)
+    return false;
+
+  // 设置键值对
+  new_entry->key = key;
+  new_entry->value = value;
+
+  // 头插法
+  new_entry->next = tab->buckets[idx];
+  tab->buckets[idx] = new_entry;
+  tab->count++;
+
+  return true;
+}
+
+void hash_table_remove(HashTable *tab, ObjString *key) {
+  if (tab == NULL || key == NULL)
+    return;
+
+  vm_ensure_obj_str_hashed(key);
+
+  uint32_t hash = key->hash;
+  int idx = hash % tab->capacity;
+
+  HashTableEntry **prev_next = &tab->buckets[idx];
+  HashTableEntry *entry = tab->buckets[idx];
+
+  int len = key->length;
+  while (entry != NULL) {
+    if (entry->key->hash == hash && entry->key->length == len &&
+        memcmp(entry->key->data, key->data, len) == 0) {
+
+      // 从链表中移除
+      *prev_next = entry->next;
+      free(entry); // 只释放 entry，key 由 GC 管理
+      tab->count--;
+      return;
+    }
+
+    prev_next = &entry->next;
+    entry = entry->next;
+  }
+}
+
+// ==========================================
+// 解释器实现
+// ==========================================
 
 Runtime *vm_runtime_new() {
   return vm_runtime_new_impl(VM_DEF_STACK_SIZE, VM_DEF_FRAME_SIZE,
@@ -21,11 +243,10 @@ Runtime *vm_runtime_new_impl(int def_stack_size, int def_frame_size,
 
   assert(gc_threshold > 0);
 
-  Runtime *rt = malloc(sizeof(Runtime));
+  Runtime *rt = calloc(1, sizeof(Runtime));
   if (rt == NULL) {
     return NULL;
   }
-  memset(rt, 0, sizeof(Runtime));
 
   rt->max_stack_size = max_stack_size;
   rt->max_frame_count = max_frame_size;
@@ -50,11 +271,10 @@ void vm_runtime_free(Runtime *rt) {
 }
 
 Context *vm_context_new(Runtime *rt) {
-  Context *ctx = malloc(sizeof(Context));
+  Context *ctx = calloc(1, sizeof(Context));
   if (ctx == NULL) {
     return NULL;
   }
-  memset(ctx, 0, sizeof(Context));
 
   ctx->runtime = rt; // 绑定运行时
 
@@ -67,8 +287,8 @@ Context *vm_context_new(Runtime *rt) {
   }
 
   // 初始化栈和帧
-  ctx->stack = malloc(ctx->stack_capacity * sizeof(Value));
-  ctx->frames = malloc(ctx->frame_capacity * sizeof(CallFrame));
+  ctx->stack = calloc(ctx->stack_capacity, sizeof(Value));
+  ctx->frames = calloc(ctx->frame_capacity, sizeof(CallFrame));
 
   if (ctx->stack == NULL || ctx->frames == NULL) {
     free(ctx->stack);
