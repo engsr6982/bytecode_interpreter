@@ -193,12 +193,13 @@ typedef struct ObjUpvalue {
 } ObjUpvalue;
 
 typedef struct {
-  uint8_t *code;
-  int code_count;
-  int code_capacity;
+  uint8_t *code;     // 字节码
+  int code_count;    // 字节码长度
+  int code_capacity; // 字节码容量
 
-  Value *constants; // 常量表 (存放字符串字面量、大数值等)
-  int const_count;
+  Value *constants;   // 常量表 (存放字符串字面量、大数值等)
+  int const_count;    // 常量表长度
+  int const_capacity; // 常量表容量
 } Chunk;
 
 typedef struct {
@@ -354,3 +355,20 @@ void vm_runtime_free(Runtime *rt);
 Context *vm_context_new(Runtime *rt);
 
 void vm_context_free(Context *ctx);
+
+void vm_push(Context *ctx, Value val);
+Value vm_pop(Context *ctx);
+Value vm_peek(Context *ctx, int distance);
+
+void chunk_init(Chunk *chunk);
+void chunk_write(Chunk *chunk, uint8_t byte);
+int chunk_add_constant(Chunk *chunk, Value value);
+void chunk_free(Chunk *chunk);
+
+typedef enum {
+  INTERPRET_OK,
+  INTERPRET_COMPILE_ERROR,
+  INTERPRET_RUNTIME_ERROR
+} InterpretResult;
+
+InterpretResult vm_run(Context *ctx);
