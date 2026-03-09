@@ -340,6 +340,12 @@ typedef struct Context {
 #define VM_MAX_FRAME_SIZE 1024
 #define VM_GC_THRESHOLD 1024 * 1024 // 1MB
 
+#define MK_VAL_VOID() ((Value){.kind = VAL_VOID})
+#define MK_VAL_NULL() ((Value){.kind = VAL_NULL})
+#define MK_VAL_BOOL(BOOL) ((Value){.kind = VAL_BOOL, .as.b = BOOL})
+#define MK_VAL_INT(I32) ((Value){.kind = VAL_INT, .as.i = I32})
+#define MK_VAL_DOUBLE(DOUBLE) ((Value){.kind = VAL_DOUBLE, .as.d = DOUBLE})
+
 /**
  * 创建一个运行时实例
  * @note 默认使用宏定义的默认值

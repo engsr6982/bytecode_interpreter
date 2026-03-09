@@ -219,17 +219,17 @@ do_OP_LOAD_CONST: {
   DISPATCH();
 }
 do_OP_LOAD_NULL: {
-  Value val = {.kind = VAL_NULL};
+  Value val = MK_VAL_NULL();
   vm_push(ctx, val);
   DISPATCH();
 }
 do_OP_LOAD_TRUE: {
-  Value val = {.kind = VAL_BOOL, .as.b = true};
+  Value val = MK_VAL_BOOL(true);
   vm_push(ctx, val);
   DISPATCH();
 }
 do_OP_LOAD_FALSE: {
-  Value val = {.kind = VAL_BOOL, .as.b = false};
+  Value val = MK_VAL_BOOL(false);
   vm_push(ctx, val);
   DISPATCH();
 }
@@ -271,7 +271,7 @@ do_OP_NOT: {
   // TODO: 处理 Truthy/Falsy 逻辑。Null 和 false 为假，其它待处理。
   bool is_falsey =
       (val.kind == VAL_NULL) || (val.kind == VAL_BOOL && !val.as.b);
-  Value res = {.kind = VAL_BOOL, .as.b = is_falsey};
+  Value res = MK_VAL_BOOL(is_falsey);
   vm_push(ctx, res);
   DISPATCH();
 }

@@ -14,8 +14,8 @@ int test_core() {
   chunk_init(&chunk);
 
   // 制作 Value: 1.5 和 2.0
-  Value a = {.kind = VAL_DOUBLE, .as.d = 1.5};
-  Value b = {.kind = VAL_DOUBLE, .as.d = 2.0};
+  Value a = MK_VAL_DOUBLE(1.5);
+  Value b = MK_VAL_DOUBLE(2.0);
 
   // 将常量加入 Chunk，并获取索引
   int a_idx = chunk_add_constant(&chunk, a);
