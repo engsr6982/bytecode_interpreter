@@ -122,13 +122,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// 栈配置(栈满时自动扩容，超出限制时触发栈溢出异常)
-#define INIT_STACK_CAPACITY 256
-#define MAX_STACK_LIMIT 8192 // 软限制：数据栈最大深度
-
-#define INIT_FRAME_CAPACITY 32
-#define MAX_FRAME_LIMIT 1024 // 软限制：调用栈最大深度
-
 typedef enum {
   VAL_NULL,   // 空值
   VAL_VOID,   // 无值
@@ -310,6 +303,12 @@ typedef struct Runtime {
   size_t bytes_allocated;   // 已分配的字节数
   size_t next_gc_threshold; // 下一次 GC 的阈值
 
+  int max_stack_size;  // 栈的最大容量
+  int max_frame_count; // 调用栈的最大深度
+
+  int default_stack_size;  // 默认栈大小(初始化)
+  int default_frame_count; // 默认调用栈深度(初始化)
+
   // TODO: HasheTable // 全局字符串常量池
 } Runtime;
 
@@ -329,3 +328,29 @@ typedef struct Context {
   ObjUpvalue
       *open_upvalues; // 当前还在数据栈上，但被内层闭包引用的所有 Upvalue 链表
 } Context;
+
+// =========================================
+// 运行时
+// =========================================
+
+#define VM_DEF_STACK_SIZE 256
+#define VM_DEF_FRAME_SIZE 32
+#define VM_MAX_STACK_SIZE 8192
+#define VM_MAX_FRAME_SIZE 1024
+#define VM_GC_THRESHOLD 1024 * 1024 // 1MB
+
+/**
+ * 创建一个运行时实例
+ * @note 默认使用宏定义的默认值
+ */
+Runtime *vm_runtime_new();
+
+Runtime *vm_runtime_new_impl(int def_stack_size, int def_frame_size,
+                             int max_stack_size, int max_frame_size,
+                             int gc_threshold);
+
+void vm_runtime_free(Runtime *rt);
+
+Context *vm_context_new(Runtime *rt);
+
+void vm_context_free(Context *ctx);
