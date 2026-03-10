@@ -50,7 +50,7 @@ HashTable *hash_table_new() {
 
   tab->capacity = 16; // 初始容量
   tab->count = 0;
-  tab->buckets = calloc(tab->capacity, sizeof(HashTableEntry));
+  tab->buckets = calloc(tab->capacity, sizeof(HashTableEntry *));
 
   if (tab->buckets == NULL) {
     free(tab);
