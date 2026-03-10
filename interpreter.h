@@ -176,10 +176,11 @@ typedef struct {
   int count;    // 数组长度
 } ObjArray;
 
+typedef struct HashTable HashTable; // fwd
+
 typedef struct {
   Object base;
-
-  // TODO: HashTable
+  // HashTable *table; // 字典 // todo
 } ObjMap;
 
 // ==========================================
@@ -309,14 +310,14 @@ typedef struct HashTableEntry {
   struct HashTableEntry *next; // 链表
 } HashTableEntry;
 
-typedef struct HashTable {
+struct HashTable {
   HashTableEntry **buckets; // 哈希桶(指针数组,每个元素为链表头指针)
   int count;                // 当前元素个数
   int capacity;             // 桶的数量
-} HashTable;
+};
 
-size_t fnv1a_hash_str(const char *key);
-size_t fnv1a_hash_str_len(const char *key, int len);
+size_t fnv1a_hash_cstr(const char *key);
+size_t fnv1a_hash_cstr_len(const char *key, int len);
 size_t fnv1a_hash_obj_str(ObjString *key);
 void vm_ensure_obj_str_hashed(ObjString *key);
 
@@ -344,13 +345,13 @@ typedef struct Runtime {
   int default_stack_size;  // 默认栈大小(初始化)
   int default_frame_count; // 默认调用栈深度(初始化)
 
-  // TODO: HasheTable // 全局字符串常量池
+  HashTable *interned_strings; // 全局字符串常量池
 } Runtime;
 
 typedef struct Context {
   Runtime *runtime; // 运行时(绑定的宿主)
 
-  // TODO: HasheTable // 全局环境
+  // HashTable *globals; // 全局环境 // todo
 
   Value *stack;       // 数据栈(堆, calloc(stack_capacity, sizeof(Value))
   int stack_capacity; // 栈容量

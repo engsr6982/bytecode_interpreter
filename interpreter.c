@@ -15,15 +15,10 @@
 #define FNV_OFFSET_BASIS 0x811c9dc5 // 常数
 #define FNV_PRIME 0x01000193        // 质数
 
-size_t fnv1a_hash_str(const char *key) {
-  size_t hash = FNV_OFFSET_BASIS;
-  while (*key) {
-    hash ^= *key++;
-    hash *= FNV_PRIME;
-  }
-  return hash;
+size_t fnv1a_hash_cstr(const char *key) {
+  return fnv1a_hash_cstr_len(key, strlen(key));
 }
-size_t fnv1a_hash_str_len(const char *key, int len) {
+size_t fnv1a_hash_cstr_len(const char *key, int len) {
   size_t hash = FNV_OFFSET_BASIS;
   for (int i = 0; i < len; i++) {
     hash ^= key[i];
@@ -38,7 +33,7 @@ size_t fnv1a_hash_obj_str(ObjString *key) {
 }
 void vm_ensure_obj_str_hashed(ObjString *key) {
   if (key->hash == 0) {
-    key->hash = fnv1a_hash_str_len(key->data, key->length);
+    key->hash = fnv1a_hash_cstr_len(key->data, key->length);
   }
 }
 
@@ -93,34 +88,46 @@ bool hash_table_clear(HashTable *tab) {
   return true;
 }
 
-static HashTableEntry *hash_table_find_entry(HashTable *tab, ObjString *key) {
-  vm_ensure_obj_str_hashed(key);
-  size_t hash = key->hash;
+static HashTableEntry *hash_table_find_entry_impl(HashTable *tab,
+                                                  const char *str, int len,
+                                                  uint32_t hash) {
+  if (tab == NULL || str == NULL || tab->count == 0) {
+    return NULL;
+  }
 
   int idx = hash % tab->capacity;
-
-  // 遍历链表查找
   HashTableEntry *entry = tab->buckets[idx];
+
   while (entry != NULL) {
-    // 比较哈希值（快速过滤）
-    if (entry->key->hash == hash) {
-      // 再比较字符串内容（防止哈希冲突）
-      if (entry->key->length == key->length &&
-          memcmp(entry->key->data, key->data, key->length) == 0) {
-        return entry;
-      }
+    // 长度相同，哈希相同，且内容相同
+    if (entry->key->length == len && entry->key->hash == hash &&
+        memcmp(entry->key->data, str, len) == 0) {
+      return entry; // 返回 entry 指针
     }
     entry = entry->next;
   }
-
   return NULL;
+}
+static HashTableEntry *hash_table_find_entry_obj_str(HashTable *tab,
+                                                     ObjString *key) {
+  vm_ensure_obj_str_hashed(key);
+  return hash_table_find_entry_impl(tab, key->data, key->length, key->hash);
+}
+static HashTableEntry *
+hash_table_find_entry_cstr_len(HashTable *tab, const char *str, int len) {
+  uint32_t hash = fnv1a_hash_cstr_len(str, len);
+  return hash_table_find_entry_impl(tab, str, len, hash);
+}
+static HashTableEntry *hash_table_find_entry_cstr(HashTable *tab,
+                                                  const char *str) {
+  return hash_table_find_entry_cstr_len(tab, str, strlen(str));
 }
 
 bool hash_table_get(HashTable *tab, ObjString *key, Value *out) {
   if (tab == NULL || key == NULL)
     return false;
 
-  HashTableEntry *entry = hash_table_find_entry(tab, key);
+  HashTableEntry *entry = hash_table_find_entry_obj_str(tab, key);
   if (entry != NULL) {
     if (out)
       *out = entry->value;
@@ -163,7 +170,7 @@ bool hash_table_put(HashTable *tab, ObjString *key, Value value) {
   if (tab == NULL || key == NULL)
     return false;
 
-  HashTableEntry *existing = hash_table_find_entry(tab, key);
+  HashTableEntry *existing = hash_table_find_entry_obj_str(tab, key);
   if (existing != NULL) {
     existing->value = value; // 更新现有键
     return true;
@@ -258,6 +265,8 @@ Runtime *vm_runtime_new_impl(int def_stack_size, int def_frame_size,
   rt->bytes_allocated = 0;
   rt->next_gc_threshold = gc_threshold;
 
+  rt->interned_strings = hash_table_new(); // 初始化全局字符串表
+
   return rt;
 }
 
@@ -266,6 +275,7 @@ void vm_runtime_free(Runtime *rt) {
 
     // TODO: 回收/检查所有资源
 
+    hash_table_free(rt->interned_strings); // 释放全局字符串表
     free(rt);
   }
 }
