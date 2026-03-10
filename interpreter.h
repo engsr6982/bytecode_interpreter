@@ -351,7 +351,7 @@ typedef struct Runtime {
 typedef struct Context {
   Runtime *runtime; // 运行时(绑定的宿主)
 
-  // HashTable *globals; // 全局环境 // todo
+  HashTable *globals; // 全局环境
 
   Value *stack;       // 数据栈(堆, calloc(stack_capacity, sizeof(Value))
   int stack_capacity; // 栈容量

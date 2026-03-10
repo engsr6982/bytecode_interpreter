@@ -272,10 +272,10 @@ Runtime *vm_runtime_new_impl(int def_stack_size, int def_frame_size,
 
 void vm_runtime_free(Runtime *rt) {
   if (rt != NULL) {
-
-    // TODO: 回收/检查所有资源
-
     hash_table_free(rt->interned_strings); // 释放全局字符串表
+
+    // TODO: 释放 rt->gc_objects 链表
+
     free(rt);
   }
 }
@@ -300,9 +300,12 @@ Context *vm_context_new(Runtime *rt) {
   ctx->stack = calloc(ctx->stack_capacity, sizeof(Value));
   ctx->frames = calloc(ctx->frame_capacity, sizeof(CallFrame));
 
-  if (ctx->stack == NULL || ctx->frames == NULL) {
+  ctx->globals = hash_table_new();
+
+  if (ctx->stack == NULL || ctx->frames == NULL || ctx->globals == NULL) {
     free(ctx->stack);
     free(ctx->frames);
+    hash_table_free(ctx->globals);
     free(ctx);
     return NULL;
   }
@@ -319,8 +322,8 @@ void vm_context_free(Context *ctx) {
     return;
   }
 
-  // TODO: 处理闭包和GC
-
+  // TODO: 处理闭包和GC?
+  hash_table_free(ctx->globals);
   free(ctx->frames);
   free(ctx->stack);
   free(ctx);
