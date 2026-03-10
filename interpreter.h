@@ -397,9 +397,9 @@ Context *vm_context_new(Runtime *rt);
 
 void vm_context_free(Context *ctx);
 
-void vm_push(Context *ctx, Value val);
-Value vm_pop(Context *ctx);
-Value vm_peek(Context *ctx, int distance);
+void vm_stack_push(Context *ctx, Value val);
+Value vm_stack_pop(Context *ctx);
+Value vm_stack_peek(Context *ctx, int distance);
 
 void chunk_init(Chunk *chunk);
 void chunk_write(Chunk *chunk, uint8_t byte);

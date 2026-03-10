@@ -326,7 +326,7 @@ void vm_context_free(Context *ctx) {
   free(ctx);
 }
 
-void vm_push(Context *ctx, Value val) {
+void vm_stack_push(Context *ctx, Value val) {
   if (ctx->sp >= ctx->stack_capacity) {
     if (ctx->sp >= ctx->runtime->max_stack_size) {
       // TODO: 抛出语言异常?
@@ -339,11 +339,11 @@ void vm_push(Context *ctx, Value val) {
   }
   ctx->stack[ctx->sp++] = val;
 }
-Value vm_pop(Context *ctx) {
+Value vm_stack_pop(Context *ctx) {
   assert(ctx->sp > 0 && "Stack Underflow");
   return ctx->stack[--ctx->sp];
 }
-Value vm_peek(Context *ctx, int distance) {
+Value vm_stack_peek(Context *ctx, int distance) {
   return ctx->stack[ctx->sp - 1 - distance];
 }
 
@@ -396,15 +396,15 @@ InterpretResult vm_run(Context *ctx) {
 // 二进制操作宏
 #define BINARY_OP(value_kind, op)                                              \
   do {                                                                         \
-    if (vm_peek(ctx, 0).kind != VAL_DOUBLE ||                                  \
-        vm_peek(ctx, 1).kind != VAL_DOUBLE) {                                  \
+    if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE ||                            \
+        vm_stack_peek(ctx, 1).kind != VAL_DOUBLE) {                            \
       fprintf(stderr, "Operands must be numbers.\n");                          \
       return INTERPRET_RUNTIME_ERROR;                                          \
     }                                                                          \
-    double b = vm_pop(ctx).as.d;                                               \
-    double a = vm_pop(ctx).as.d;                                               \
+    double b = vm_stack_pop(ctx).as.d;                                         \
+    double a = vm_stack_pop(ctx).as.d;                                         \
     Value res = {.kind = value_kind, .as.d = a op b};                          \
-    vm_push(ctx, res);                                                         \
+    vm_stack_push(ctx, res);                                                   \
   } while (false)
 
   // 跳转表的顺序必须与 interpreter.h 中的 OP_Code 枚举顺序绝对一致
@@ -445,30 +445,30 @@ do_OP_NOP:
 // --- 栈操作与常量 ---
 do_OP_LOAD_CONST: {
   Value constant = READ_CONSTANT();
-  vm_push(ctx, constant);
+  vm_stack_push(ctx, constant);
   DISPATCH();
 }
 do_OP_LOAD_NULL: {
   Value val = MK_VAL_NULL();
-  vm_push(ctx, val);
+  vm_stack_push(ctx, val);
   DISPATCH();
 }
 do_OP_LOAD_TRUE: {
   Value val = MK_VAL_BOOL(true);
-  vm_push(ctx, val);
+  vm_stack_push(ctx, val);
   DISPATCH();
 }
 do_OP_LOAD_FALSE: {
   Value val = MK_VAL_BOOL(false);
-  vm_push(ctx, val);
+  vm_stack_push(ctx, val);
   DISPATCH();
 }
 do_OP_POP: {
-  vm_pop(ctx);
+  vm_stack_pop(ctx);
   DISPATCH();
 }
 do_OP_DUP: {
-  vm_push(ctx, vm_peek(ctx, 0));
+  vm_stack_push(ctx, vm_stack_peek(ctx, 0));
   DISPATCH();
 }
 
@@ -487,28 +487,28 @@ do_OP_DIV:
   DISPATCH();
 
 do_OP_NEGATE: {
-  if (vm_peek(ctx, 0).kind != VAL_DOUBLE) {
+  if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE) {
     fprintf(stderr, "Operand must be a number.\n");
     return INTERPRET_RUNTIME_ERROR;
   }
-  Value val = vm_pop(ctx);
+  Value val = vm_stack_pop(ctx);
   val.as.d = -val.as.d;
-  vm_push(ctx, val);
+  vm_stack_push(ctx, val);
   DISPATCH();
 }
 do_OP_NOT: {
-  Value val = vm_pop(ctx);
+  Value val = vm_stack_pop(ctx);
   // TODO: 处理 Truthy/Falsy 逻辑。Null 和 false 为假，其它待处理。
   bool is_falsey =
       (val.kind == VAL_NULL) || (val.kind == VAL_BOOL && !val.as.b);
   Value res = MK_VAL_BOOL(is_falsey);
-  vm_push(ctx, res);
+  vm_stack_push(ctx, res);
   DISPATCH();
 }
 
 // --- 控制流 ---
 do_OP_RETURN: {
-  Value result = vm_pop(ctx);
+  Value result = vm_stack_pop(ctx);
 
   // TODO: 处理 CallFrame 的退栈逻辑
   printf("Result: ");
