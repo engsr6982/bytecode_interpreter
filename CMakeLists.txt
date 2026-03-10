@@ -15,6 +15,11 @@ target_include_directories(interpreter
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# debug macro
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-g)
+    target_compile_definitions(interpreter PRIVATE VM_DEBUG)
+endif()
 
 # test interpreter
 add_executable(interpreter_test

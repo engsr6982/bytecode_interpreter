@@ -381,6 +381,8 @@ typedef struct Context {
 #define MK_VAL_INT(I32) ((Value){.kind = VAL_INT, .as.i = I32})
 #define MK_VAL_DOUBLE(DOUBLE) ((Value){.kind = VAL_DOUBLE, .as.d = DOUBLE})
 
+void vm_fatal_error_terminate(const char *fmt, ...);
+
 /**
  * 创建一个运行时实例
  * @note 默认使用宏定义的默认值
@@ -405,6 +407,22 @@ void chunk_init(Chunk *chunk);
 void chunk_write(Chunk *chunk, uint8_t byte);
 int chunk_add_constant(Chunk *chunk, Value value);
 void chunk_free(Chunk *chunk);
+
+// GC System
+void vm_gc_collect(Context *ctx);
+void vm_gc_mark_value(Context *ctx, Value value);
+void vm_gc_mark_object(Context *ctx, Object *obj);
+
+Object *vm_gc_alloc(Context *ctx, size_t size, ObjectKind kind);
+void vm_gc_free_object(Runtime *rt, Object *obj);
+
+// object factory
+ObjString *vm_mk_string(Context *ctx, const char *text, int length);
+ObjArray *vm_mk_array(Context *ctx);
+ObjMap *vm_mk_map(Context *ctx);
+ObjFunction *vm_mk_function(Context *ctx);
+ObjClosure *vm_mk_closure(Context *ctx, ObjFunction *func);
+ObjUpvalue *vm_mk_upvalue(Context *ctx, Value *slot);
 
 typedef enum {
   INTERPRET_OK,

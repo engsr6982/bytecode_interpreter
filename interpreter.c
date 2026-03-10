@@ -1,6 +1,8 @@
 #include "interpreter.h"
 
 #include <assert.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -118,10 +120,6 @@ hash_table_find_entry_cstr_len(HashTable *tab, const char *str, int len) {
   uint32_t hash = fnv1a_hash_cstr_len(str, len);
   return hash_table_find_entry_impl(tab, str, len, hash);
 }
-static HashTableEntry *hash_table_find_entry_cstr(HashTable *tab,
-                                                  const char *str) {
-  return hash_table_find_entry_cstr_len(tab, str, strlen(str));
-}
 
 bool hash_table_get(HashTable *tab, ObjString *key, Value *out) {
   if (tab == NULL || key == NULL)
@@ -234,6 +232,21 @@ void hash_table_remove(HashTable *tab, ObjString *key) {
 // 解释器实现
 // ==========================================
 
+void vm_fatal_error_terminate(const char *fmt, ...) {
+#define PREFIX "VM FATAL ERROR: "
+
+  va_list args;
+  va_start(args, fmt);
+
+  fprintf(stderr, PREFIX);
+  vfprintf(stderr, fmt, args);
+  fprintf(stderr, "\n");
+
+  va_end(args);
+
+  abort();
+}
+
 Runtime *vm_runtime_new() {
   return vm_runtime_new_impl(VM_DEF_STACK_SIZE, VM_DEF_FRAME_SIZE,
                              VM_MAX_STACK_SIZE, VM_MAX_FRAME_SIZE,
@@ -274,7 +287,13 @@ void vm_runtime_free(Runtime *rt) {
   if (rt != NULL) {
     hash_table_free(rt->interned_strings); // 释放全局字符串表
 
-    // TODO: 释放 rt->gc_objects 链表
+    // 释放 rt->gc_objects 链表中的所有对象
+    Object *curr = rt->gc_objects;
+    while (curr != NULL) {
+      Object *next = curr->next;
+      vm_gc_free_object(rt, curr);
+      curr = next;
+    }
 
     free(rt);
   }
@@ -332,11 +351,13 @@ void vm_context_free(Context *ctx) {
 void vm_stack_push(Context *ctx, Value val) {
   if (ctx->sp >= ctx->stack_capacity) {
     if (ctx->sp >= ctx->runtime->max_stack_size) {
-      // TODO: 抛出语言异常?
-      fprintf(stderr, "Stack Overflow.\n");
-      exit(1);
+      vm_fatal_error_terminate("Stack Overflow, sp=%d, capacity=%d, max=%d",
+                               ctx->sp, ctx->stack_capacity,
+                               ctx->runtime->max_stack_size);
     }
     // 扩容栈
+
+    // todo: 审查扩容是否安全，可能的内存泄漏
     ctx->stack_capacity *= 2;
     ctx->stack = realloc(ctx->stack, ctx->stack_capacity * sizeof(Value));
   }
@@ -382,6 +403,276 @@ void chunk_free(Chunk *chunk) {
   chunk_init(chunk);
 }
 
+// GC System
+void vm_gc_collect(Context *ctx) {
+  Runtime *rt = ctx->runtime;
+  size_t before_gc = rt->bytes_allocated;
+
+  // ==========================================
+  // 标记所有根节点
+  // ==========================================
+
+  // 数据栈
+  for (int i = 0; i < ctx->sp; i++) {
+    vm_gc_mark_value(ctx, ctx->stack[i]);
+  }
+
+  // 调用栈帧中的闭包
+  for (int i = 0; i < ctx->frame_count; i++) {
+    vm_gc_mark_object(ctx, (Object *)ctx->frames[i].closure);
+  }
+
+  // 所有的 Open Upvalues
+  for (ObjUpvalue *upvalue = ctx->open_upvalues; upvalue != NULL;
+       upvalue = upvalue->next) {
+    vm_gc_mark_object(ctx, (Object *)upvalue);
+  }
+
+  // 全局变量
+  if (ctx->globals) {
+    for (int i = 0; i < ctx->globals->capacity; i++) {
+      HashTableEntry *entry = ctx->globals->buckets[i];
+      while (entry != NULL) {
+        vm_gc_mark_object(ctx, (Object *)entry->key);
+        vm_gc_mark_value(ctx, entry->value);
+        entry = entry->next;
+      }
+    }
+  }
+
+  // ==========================================
+  // 处理弱引用 (全局字符串常量池)
+  // ==========================================
+
+  // todo: 审查是否安全，这里直接修改了哈希表中的数据
+  HashTable *strings = rt->interned_strings;
+  for (int i = 0; i < strings->capacity; i++) {
+    HashTableEntry **prev = &strings->buckets[i];
+    while (*prev != NULL) {
+      HashTableEntry *entry = *prev;
+      if (!entry->key->base.is_marked) {
+        // 字符串未被标记，即将被销毁，将其从常量池中摘除
+        *prev = entry->next;
+        free(entry); // 仅释放Entry本身，ObjString 在 Sweep 阶段统一释放
+        strings->count--;
+      } else {
+        prev = &entry->next;
+      }
+    }
+  }
+
+  // ==========================================
+  // 扫描并清除
+  // ==========================================
+  Object **object_link = &rt->gc_objects;
+  while (*object_link != NULL) {
+    Object *obj = *object_link;
+    if (obj->is_marked) {
+      // 保留对象，清除标记等待下次 GC
+      obj->is_marked = false;
+      object_link = &obj->next;
+    } else {
+      // 摘除节点并释放内存
+      *object_link = obj->next;
+      vm_gc_free_object(rt, obj);
+    }
+  }
+
+  // 调整下一次 GC 触发阈值
+  rt->next_gc_threshold = rt->bytes_allocated * 2;
+
+#ifdef VM_DEBUG
+  printf("GC Run: %zu bytes before, %zu bytes after.\n", before_gc,
+         rt->bytes_allocated);
+#endif
+}
+void vm_gc_mark_value(Context *ctx, Value value) {
+  if (value.kind == VAL_OBJ) {
+    vm_gc_mark_object(ctx, value.as.obj);
+  }
+}
+void vm_gc_mark_object(Context *ctx, Object *obj) {
+  if (obj == NULL || obj->is_marked) {
+    return; // 空指针或已标记过，直接跳过防死循环
+  }
+
+  obj->is_marked = true;
+
+  // 递归标记其引用的内部对象 (Trace)
+  switch (obj->kind) {
+  case OBJ_STRING:
+    // 字符串没有内部引用
+    break;
+  case OBJ_ARRAY: {
+    ObjArray *arr = (ObjArray *)obj;
+    for (int i = 0; i < arr->count; i++) {
+      vm_gc_mark_value(ctx, arr->items[i]);
+    }
+    break;
+  }
+  case OBJ_MAP: {
+    // ObjMap *map = (ObjMap *)obj;
+    // todo: 遍历 map->table 标记 key 和 value
+    break;
+  }
+  case OBJ_FUNCTION: {
+    ObjFunction *func = (ObjFunction *)obj;
+    if (func->name != NULL)
+      vm_gc_mark_object(ctx, (Object *)func->name);
+    for (int i = 0; i < func->chunk.const_count; i++) {
+      vm_gc_mark_value(ctx, func->chunk.constants[i]);
+    }
+    break;
+  }
+  case OBJ_CLOSURE: {
+    ObjClosure *closure = (ObjClosure *)obj;
+    vm_gc_mark_object(ctx, (Object *)closure->function);
+    for (int i = 0; i < closure->upvalue_count; i++) {
+      vm_gc_mark_object(ctx, (Object *)closure->upvalues[i]);
+    }
+    break;
+  }
+  case OBJ_UPVALUE: {
+    ObjUpvalue *upvalue = (ObjUpvalue *)obj;
+    vm_gc_mark_value(ctx, upvalue->closed);
+    break;
+  }
+  }
+}
+
+Object *vm_gc_alloc(Context *ctx, size_t size, ObjectKind kind) {
+  Runtime *rt = ctx->runtime;
+  assert(rt != NULL);
+
+  // 当前分配的内存大小超过阈值，触发GC
+  if (rt->bytes_allocated + size > rt->next_gc_threshold) {
+    vm_gc_collect(ctx);
+  }
+
+  // 分配内存并初始化对象头
+  Object *obj = calloc(1, sizeof(Object));
+  if (obj == NULL) {
+    vm_fatal_error_terminate("Out of memory.");
+  }
+
+  obj->kind = kind;
+  obj->is_marked = false;
+
+  // 将对象插入到 VM 的垃圾回收链表头部
+  obj->next = rt->gc_objects;
+  rt->gc_objects = obj;
+
+  rt->bytes_allocated += size;
+  return obj;
+}
+void vm_gc_free_object(Runtime *rt, Object *obj) {
+  assert(obj != NULL);
+  switch (obj->kind) {
+  case OBJ_STRING: {
+    ObjString *str = (ObjString *)obj;
+    free(str->data);
+    rt->bytes_allocated -= sizeof(ObjString) + str->length + 1;
+    break;
+  }
+  case OBJ_ARRAY: {
+    ObjArray *arr = (ObjArray *)obj;
+    free(arr->items);
+    rt->bytes_allocated -= sizeof(ObjArray) + (arr->capacity * sizeof(Value));
+    break;
+  }
+  case OBJ_MAP: {
+    // ObjMap *map = (ObjMap *)obj;
+    // hash_table_free(map->table); // todo: 等 map 内部结构完毕后补上
+    rt->bytes_allocated -= sizeof(ObjMap);
+    break;
+  }
+  case OBJ_FUNCTION: {
+    ObjFunction *func = (ObjFunction *)obj;
+    chunk_free(&func->chunk);
+    rt->bytes_allocated -= sizeof(ObjFunction);
+    break;
+  }
+  case OBJ_CLOSURE: {
+    ObjClosure *closure = (ObjClosure *)obj;
+    free(closure->upvalues);
+    rt->bytes_allocated -=
+        sizeof(ObjClosure) + (closure->upvalue_count * sizeof(ObjUpvalue *));
+    break;
+  }
+  case OBJ_UPVALUE: {
+    rt->bytes_allocated -= sizeof(ObjUpvalue);
+    break;
+  }
+  }
+  free(obj); // 释放对象内存
+}
+
+// object factory
+// todo: 因 vm_gc_alloc 可能触发GC，对象可能在构造过程中被回收，需要处理
+ObjString *vm_mk_string(Context *ctx, const char *text, int length) {
+  // 在全局字符串常量池中查找，如果已经存在，直接返回
+  HashTableEntry *entry = hash_table_find_entry_cstr_len(
+      ctx->runtime->interned_strings, text, length);
+  if (entry != NULL) {
+    return entry->key;
+  }
+
+  // 否则，创建新的字符串对象
+  ObjString *str = (ObjString *)vm_gc_alloc(ctx, sizeof(ObjString), OBJ_STRING);
+  str->length = length;
+  str->data = malloc(length + 1);
+  memcpy(str->data, text, length);
+  str->data[length] = '\0';
+  str->hash = fnv1a_hash_cstr_len(text, length);
+
+  ctx->runtime->bytes_allocated += length + 1; // 追加字符串所占内存
+
+  // 将字符串对象插入到全局字符串常量池
+  hash_table_put(ctx->runtime->interned_strings, str, MK_VAL_NULL());
+  return str;
+}
+ObjArray *vm_mk_array(Context *ctx) {
+  ObjArray *arr = (ObjArray *)vm_gc_alloc(ctx, sizeof(ObjArray), OBJ_ARRAY);
+  arr->capacity = 0;
+  arr->count = 0;
+  arr->items = NULL;
+  return arr;
+}
+ObjMap *vm_mk_map(Context *ctx) {
+  ObjMap *map = (ObjMap *)vm_gc_alloc(ctx, sizeof(ObjMap), OBJ_MAP);
+  // map->table = hash_table_new(); // todo: 等 map 内部结构完毕后补上
+  return map;
+}
+ObjFunction *vm_mk_function(Context *ctx) {
+  ObjFunction *func =
+      (ObjFunction *)vm_gc_alloc(ctx, sizeof(ObjFunction), OBJ_FUNCTION);
+  func->arity = 0;
+  func->upvalue_count = 0;
+  func->name = NULL;
+  chunk_init(&func->chunk);
+  return func;
+}
+ObjClosure *vm_mk_closure(Context *ctx, ObjFunction *func) {
+  ObjClosure *closure =
+      (ObjClosure *)vm_gc_alloc(ctx, sizeof(ObjClosure), OBJ_CLOSURE);
+  closure->function = func;
+
+  // 分配捕获的 Upvalues 数组
+  closure->upvalues = calloc(func->upvalue_count, sizeof(ObjUpvalue *));
+  closure->upvalue_count = func->upvalue_count;
+  ctx->runtime->bytes_allocated += sizeof(ObjUpvalue *) * func->upvalue_count;
+
+  return closure;
+}
+ObjUpvalue *vm_mk_upvalue(Context *ctx, Value *slot) {
+  ObjUpvalue *upvalue =
+      (ObjUpvalue *)vm_gc_alloc(ctx, sizeof(ObjUpvalue), OBJ_UPVALUE);
+  upvalue->location = slot;
+  upvalue->closed = MK_VAL_NULL();
+  upvalue->next = NULL;
+  return upvalue;
+}
+
 InterpretResult vm_run(Context *ctx) {
   CallFrame *frame = &ctx->frames[ctx->frame_count - 1];
 
@@ -401,7 +692,7 @@ InterpretResult vm_run(Context *ctx) {
   do {                                                                         \
     if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE ||                            \
         vm_stack_peek(ctx, 1).kind != VAL_DOUBLE) {                            \
-      fprintf(stderr, "Operands must be numbers.\n");                          \
+      vm_fatal_error_terminate("Operands must be numbers.");                   \
       return INTERPRET_RUNTIME_ERROR;                                          \
     }                                                                          \
     double b = vm_stack_pop(ctx).as.d;                                         \
@@ -491,7 +782,7 @@ do_OP_DIV:
 
 do_OP_NEGATE: {
   if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE) {
-    fprintf(stderr, "Operand must be a number.\n");
+    vm_fatal_error_terminate("Operand must be a number.");
     return INTERPRET_RUNTIME_ERROR;
   }
   Value val = vm_stack_pop(ctx);
@@ -561,7 +852,7 @@ do_OP_CALL:
 do_OP_CLOSURE:
 do_OP_CLOSE_UPVALUE:
 do_OP_THROW:
-  fprintf(stderr, "Unimplemented opcode!\n");
+  vm_fatal_error_terminate("Unimplemented opcode!");
   return INTERPRET_RUNTIME_ERROR;
 
 #undef READ_BYTE
