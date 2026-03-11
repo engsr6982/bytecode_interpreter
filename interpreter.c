@@ -230,7 +230,7 @@ void hash_table_remove(HashTable *tab, ObjString *key) {
 // 解释器实现
 // ==========================================
 
-void vm_fatal_error_terminate(const char *fmt, ...) {
+void vm_fatal_error_abort(const char *fmt, ...) {
 #define PREFIX "VM FATAL ERROR: "
 
   va_list args;
@@ -354,9 +354,9 @@ void vm_context_free(Context *ctx) {
 void vm_stack_push(Context *ctx, Value val) {
   if (ctx->sp >= ctx->stack_capacity) {
     if (ctx->sp >= ctx->runtime->max_stack_size) {
-      vm_fatal_error_terminate("Stack Overflow, sp=%d, capacity=%d, max=%d",
-                               ctx->sp, ctx->stack_capacity,
-                               ctx->runtime->max_stack_size);
+      vm_fatal_error_abort("Stack Overflow, sp=%d, capacity=%d, max=%d",
+                           ctx->sp, ctx->stack_capacity,
+                           ctx->runtime->max_stack_size);
     }
     // 扩容栈
     int new_cap = ctx->stack_capacity * 2;
@@ -366,7 +366,7 @@ void vm_stack_push(Context *ctx, Value val) {
 
     Value *new_stack = realloc(ctx->stack, new_cap * sizeof(Value));
     if (new_stack == NULL) {
-      vm_fatal_error_terminate("Stack reallocation failed (Out of memory).");
+      vm_fatal_error_abort("Stack reallocation failed (Out of memory).");
     }
     ctx->stack = new_stack;
     ctx->stack_capacity = new_cap;
@@ -590,7 +590,7 @@ Object *vm_gc_alloc(Context *ctx, size_t size, ObjectKind kind) {
   // 分配内存并初始化对象头
   Object *obj = calloc(1, size);
   if (obj == NULL) {
-    vm_fatal_error_terminate("Out of memory during GC Alloc.");
+    vm_fatal_error_abort("Out of memory during GC Alloc.");
   }
 
   obj->kind = kind;
@@ -607,7 +607,7 @@ Object *vm_gc_alloc(Context *ctx, size_t size, ObjectKind kind) {
     Object **new_stack =
         realloc(rt->grey_stack, rt->grey_capacity * sizeof(Object *));
     if (new_stack == NULL) {
-      vm_fatal_error_terminate("OOM allocating GC grey stack.");
+      vm_fatal_error_abort("OOM allocating GC grey stack.");
     }
     rt->grey_stack = new_stack;
   }
@@ -682,7 +682,7 @@ ObjString *vm_mk_string(Context *ctx, const char *text, int length) {
   str->length = length;
   str->data = malloc(length + 1);
   if (str->data == NULL) {
-    vm_fatal_error_terminate("OOM in string data");
+    vm_fatal_error_abort("OOM in string data");
   }
   memcpy(str->data, text, length);
   str->data[length] = '\0';
@@ -733,7 +733,7 @@ ObjClosure *vm_mk_closure(Context *ctx, ObjFunction *func) {
     // 分配捕获的 Upvalues 数组
     closure->upvalues = calloc(func->upvalue_count, sizeof(ObjUpvalue *));
     if (closure->upvalues == NULL) {
-      vm_fatal_error_terminate("OOM in closure upvalues");
+      vm_fatal_error_abort("OOM in closure upvalues");
     }
     closure->upvalue_count = func->upvalue_count;
     vm_memory_adjust(ctx->runtime, sizeof(ObjUpvalue *) * func->upvalue_count);
@@ -774,7 +774,7 @@ InterpretResult vm_run(Context *ctx) {
   do {                                                                         \
     if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE ||                            \
         vm_stack_peek(ctx, 1).kind != VAL_DOUBLE) {                            \
-      vm_fatal_error_terminate("Operands must be numbers.");                   \
+      vm_fatal_error_abort("Operands must be numbers.");                       \
       return INTERPRET_RUNTIME_ERROR;                                          \
     }                                                                          \
     double b = vm_stack_pop(ctx).as.d;                                         \
@@ -864,7 +864,7 @@ do_OP_DIV:
 
 do_OP_NEGATE: {
   if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE) {
-    vm_fatal_error_terminate("Operand must be a number.");
+    vm_fatal_error_abort("Operand must be a number.");
     return INTERPRET_RUNTIME_ERROR;
   }
   Value val = vm_stack_pop(ctx);
@@ -934,7 +934,7 @@ do_OP_CALL:
 do_OP_CLOSURE:
 do_OP_CLOSE_UPVALUE:
 do_OP_THROW:
-  vm_fatal_error_terminate("Unimplemented opcode!");
+  vm_fatal_error_abort("Unimplemented opcode!");
   return INTERPRET_RUNTIME_ERROR;
 
 #undef READ_BYTE

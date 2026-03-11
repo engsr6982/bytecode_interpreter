@@ -389,7 +389,7 @@ typedef struct Context {
 #define MK_VAL_OBJ(OBJ_PTR)                                                    \
   ((Value){.kind = VAL_OBJ, .as.obj = (Object *)(OBJ_PTR)})
 
-void vm_fatal_error_terminate(const char *fmt, ...);
+void vm_fatal_error_abort(const char *fmt, ...);
 
 /**
  * 创建一个运行时实例
