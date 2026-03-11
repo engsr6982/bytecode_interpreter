@@ -346,6 +346,12 @@ typedef struct Runtime {
   int default_frame_count; // 默认调用栈深度(初始化)
 
   HashTable *interned_strings; // 全局字符串常量池
+
+  // GC: 灰色对象栈
+  Object **grey_stack;
+  int grey_count;    // GC: 灰色对象栈数量
+  int grey_capacity; // GC: 灰色对象栈容量
+  int object_count;  // 对象数量
 } Runtime;
 
 typedef struct Context {
@@ -380,6 +386,8 @@ typedef struct Context {
 #define MK_VAL_BOOL(BOOL) ((Value){.kind = VAL_BOOL, .as.b = BOOL})
 #define MK_VAL_INT(I32) ((Value){.kind = VAL_INT, .as.i = I32})
 #define MK_VAL_DOUBLE(DOUBLE) ((Value){.kind = VAL_DOUBLE, .as.d = DOUBLE})
+#define MK_VAL_OBJ(OBJ_PTR)                                                    \
+  ((Value){.kind = VAL_OBJ, .as.obj = (Object *)(OBJ_PTR)})
 
 void vm_fatal_error_terminate(const char *fmt, ...);
 
@@ -412,6 +420,8 @@ void chunk_free(Chunk *chunk);
 void vm_gc_collect(Context *ctx);
 void vm_gc_mark_value(Context *ctx, Value value);
 void vm_gc_mark_object(Context *ctx, Object *obj);
+
+void vm_memory_adjust(Runtime *rt, ptrdiff_t bytes);
 
 Object *vm_gc_alloc(Context *ctx, size_t size, ObjectKind kind);
 void vm_gc_free_object(Runtime *rt, Object *obj);
