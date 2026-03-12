@@ -389,6 +389,15 @@ typedef struct Context {
 #define MK_VAL_OBJ(OBJ_PTR)                                                    \
   ((Value){.kind = VAL_OBJ, .as.obj = (Object *)(OBJ_PTR)})
 
+bool vm_is_void(Value val) { return val.kind == VAL_VOID; }
+bool vm_is_null(Value val) { return val.kind == VAL_NULL; }
+bool vm_is_bool(Value val) { return val.kind == VAL_BOOL; }
+bool vm_is_integer(Value val) { return val.kind == VAL_INT; }
+bool vm_is_double(Value val) { return val.kind == VAL_DOUBLE; }
+bool vm_is_number(Value val) {
+  return val.kind == VAL_INT || val.kind == VAL_DOUBLE;
+}
+
 void vm_fatal_error_abort(const char *fmt, ...);
 
 /**

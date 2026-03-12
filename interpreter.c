@@ -1,6 +1,7 @@
 #include "interpreter.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -901,11 +902,21 @@ do_OP_RETURN: {
 
   return INTERPRET_OK;
 }
-
-// ========================================================
-// 以下指令尚未实现 (TODO 区)，暂时拦截避免 Crash
-// ========================================================
-do_OP_MOD:
+do_OP_MOD: {
+  Value rhs = vm_stack_pop(ctx);
+  Value lhs = vm_stack_pop(ctx);
+  if (vm_is_integer(rhs) && vm_is_integer(lhs)) {
+    vm_stack_push(ctx, MK_VAL_INT(lhs.as.i % rhs.as.i));
+  } else if (vm_is_double(lhs) && vm_is_double(rhs)) {
+    vm_stack_push(ctx, MK_VAL_DOUBLE(fmod(lhs.as.d, rhs.as.d)));
+  } else {
+    // todo: throw error
+  }
+  DISPATCH();
+}
+  // ========================================================
+  // 以下指令尚未实现 (TODO 区)，暂时拦截避免 Crash
+  // ========================================================
 do_OP_GET_GLOBAL:
 do_OP_SET_GLOBAL:
 do_OP_GET_LOCAL:
