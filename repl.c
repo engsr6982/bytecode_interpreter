@@ -14,8 +14,8 @@ int test_core() {
   chunk_init(&chunk);
 
   // 制作 Value: 1.5 和 2.0
-  Value a = MK_VAL_DOUBLE(1.5);
-  Value b = MK_VAL_DOUBLE(2.0);
+  Value a = MK_VAL_F64(1.5);
+  Value b = MK_VAL_F64(2.0);
 
   // 将常量加入 Chunk，并获取索引
   int a_idx = chunk_add_constant(&chunk, a);
@@ -28,7 +28,7 @@ int test_core() {
   chunk_write(&chunk, OP_LOAD_CONST);
   chunk_write(&chunk, b_idx);
 
-  chunk_write(&chunk, OP_ADD);
+  chunk_write(&chunk, OP_IADD);
   chunk_write(&chunk, OP_RETURN);
 
   // 伪造一个 ObjFunction 和 ObjClosure 给 CallFrame 使用

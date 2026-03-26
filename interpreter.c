@@ -756,6 +756,22 @@ ObjUpvalue *vm_mk_upvalue(Context *ctx, Value *slot) {
   return upvalue;
 }
 
+void vm_close_upvalues(Context *ctx, Value *last_slot) {
+  // 从链表头开始寻找，只要 Upvalue 指向的位置大于等于将要弹出的栈底 last_slot
+  while (ctx->open_upvalues != NULL &&
+         ctx->open_upvalues->location >= last_slot) {
+    ObjUpvalue *upvalue = ctx->open_upvalues;
+
+    // 将栈上的值拷贝到堆里的 closed 字段
+    upvalue->closed = *upvalue->location;
+    // 将指针重定向到自己的内部存储
+    upvalue->location = &upvalue->closed;
+
+    // 从 open 链表中移除
+    ctx->open_upvalues = upvalue->next;
+  }
+}
+
 InterpretResult vm_run(Context *ctx) {
   CallFrame *frame = &ctx->frames[ctx->frame_count - 1];
 
@@ -771,45 +787,52 @@ InterpretResult vm_run(Context *ctx) {
 #define READ_CONSTANT() (frame->closure->function->chunk.constants[READ_BYTE()])
 
 // 二进制操作宏
-#define BINARY_OP(value_kind, op)                                              \
+#define BINARY_OP_INT(op)                                                      \
   do {                                                                         \
-    if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE ||                            \
-        vm_stack_peek(ctx, 1).kind != VAL_DOUBLE) {                            \
-      vm_fatal_error_abort("Operands must be numbers.");                       \
-      return INTERPRET_RUNTIME_ERROR;                                          \
-    }                                                                          \
-    double b = vm_stack_pop(ctx).as.d;                                         \
-    double a = vm_stack_pop(ctx).as.d;                                         \
-    Value res = {.kind = value_kind, .as.d = a op b};                          \
-    vm_stack_push(ctx, res);                                                   \
+    int b = vm_stack_pop(ctx).as.i32;                                            \
+    int a = vm_stack_pop(ctx).as.i32;                                            \
+    vm_stack_push(ctx, MK_VAL_I32(a op b));                                    \
+  } while (false)
+
+#define BINARY_OP_FLOAT(op)                                                    \
+  do {                                                                         \
+    double b = vm_stack_pop(ctx).as.f64;                                         \
+    double a = vm_stack_pop(ctx).as.f64;                                         \
+    vm_stack_push(ctx, MK_VAL_F64(a op b));                                    \
   } while (false)
 
   // 跳转表的顺序必须与 interpreter.h 中的 OP_Code 枚举顺序绝对一致
   static void *dispatch_table[] = {
       &&do_OP_NOP,
 
-      &&do_OP_LOAD_CONST, &&do_OP_LOAD_NULL,     &&do_OP_LOAD_TRUE,
-      &&do_OP_LOAD_FALSE, &&do_OP_POP,           &&do_OP_DUP,
+      &&do_OP_LOAD_CONST, &&do_OP_LOAD_NULL, &&do_OP_LOAD_TRUE,
+      &&do_OP_LOAD_FALSE, &&do_OP_POP, &&do_OP_DUP,
 
-      &&do_OP_GET_GLOBAL, &&do_OP_SET_GLOBAL,    &&do_OP_GET_LOCAL,
-      &&do_OP_SET_LOCAL,  &&do_OP_GET_UPVALUE,   &&do_OP_SET_UPVALUE,
+      &&do_OP_GET_GLOBAL, &&do_OP_SET_GLOBAL, &&do_OP_GET_LOCAL,
+      &&do_OP_SET_LOCAL, &&do_OP_GET_UPVALUE, &&do_OP_SET_UPVALUE,
 
-      &&do_OP_NEW_MAP,    &&do_OP_NEW_ARRAY,     &&do_OP_GET_PROP,
-      &&do_OP_SET_PROP,
+      &&do_OP_NEW_MAP, &&do_OP_NEW_ARRAY, &&do_OP_GET_PROP, &&do_OP_SET_PROP,
 
-      &&do_OP_ADD,        &&do_OP_SUB,           &&do_OP_MUL,
-      &&do_OP_DIV,        &&do_OP_MOD,           &&do_OP_NEGATE,
-      &&do_OP_INC,        &&do_OP_DEC,
+      // Int ops
+      &&do_OP_IADD, &&do_OP_ISUB, &&do_OP_IMUL, &&do_OP_IDIV, &&do_OP_IMOD,
+      &&do_OP_INEG, &&do_OP_IINC, &&do_OP_IDEC, &&do_OP_IEQ, &&do_OP_INEQ,
+      &&do_OP_ILT, &&do_OP_IGT, &&do_OP_ILTE, &&do_OP_IGTE,
 
-      &&do_OP_EQ,         &&do_OP_NEQ,           &&do_OP_LT,
-      &&do_OP_GT,         &&do_OP_LTE,           &&do_OP_GTE,
-      &&do_OP_NOT,        &&do_OP_TYPEOF,        &&do_OP_INSTANCEOF,
-      &&do_OP_IN,
+      // Float ops
+      &&do_OP_FADD, &&do_OP_FSUB, &&do_OP_FMUL, &&do_OP_FDIV, &&do_OP_FMOD,
+      &&do_OP_FNEG, &&do_OP_FINC, &&do_OP_FDEC, &&do_OP_FEQ, &&do_OP_FNEQ,
+      &&do_OP_FLT, &&do_OP_FGT, &&do_OP_FLTE, &&do_OP_FGTE,
 
-      &&do_OP_JMP,        &&do_OP_JMP_IF_FALSE,  &&do_OP_LOOP,
-      &&do_OP_CALL,       &&do_OP_RETURN,
+      // Bool ops
+      &&do_OP_BEQ, &&do_OP_BNEQ, &&do_OP_BNOT,
 
-      &&do_OP_CLOSURE,    &&do_OP_CLOSE_UPVALUE, &&do_OP_THROW};
+      // Obj ops
+      &&do_OP_OEQ, &&do_OP_ONEQ,
+
+      &&do_OP_JMP, &&do_OP_JMP_IF_FALSE, &&do_OP_LOOP, &&do_OP_CALL,
+      &&do_OP_RETURN,
+
+      &&do_OP_CLOSURE, &&do_OP_CLOSE_UPVALUE, &&do_OP_THROW};
 
 // 派发宏：读取下一个字节，作为索引去查找 dispatch_table，直接跳转到对应标签
 #define DISPATCH() goto *dispatch_table[READ_BYTE()]
@@ -849,74 +872,196 @@ do_OP_DUP: {
   DISPATCH();
 }
 
-// --- 算术与位运算 ---
-do_OP_ADD:
-  BINARY_OP(VAL_DOUBLE, +);
+// ==========================================
+// 整数运算
+// ==========================================
+do_OP_IADD:
+  BINARY_OP_INT(+);
   DISPATCH();
-do_OP_SUB:
-  BINARY_OP(VAL_DOUBLE, -);
+do_OP_ISUB:
+  BINARY_OP_INT(-);
   DISPATCH();
-do_OP_MUL:
-  BINARY_OP(VAL_DOUBLE, *);
+do_OP_IMUL:
+  BINARY_OP_INT(*);
   DISPATCH();
-do_OP_DIV:
-  BINARY_OP(VAL_DOUBLE, /);
-  DISPATCH();
-
-do_OP_NEGATE: {
-  if (vm_stack_peek(ctx, 0).kind != VAL_DOUBLE) {
-    vm_fatal_error_abort("Operand must be a number.");
-    return INTERPRET_RUNTIME_ERROR;
+do_OP_IDIV: {
+  int b = vm_stack_pop(ctx).as.i32;
+  int a = vm_stack_pop(ctx).as.i32;
+  if (b == 0) {
+    // todo: throw runtime exception
+    vm_fatal_error_abort("Division by zero.");
   }
-  Value val = vm_stack_pop(ctx);
-  val.as.d = -val.as.d;
-  vm_stack_push(ctx, val);
+  vm_stack_push(ctx, MK_VAL_I32(a / b));
   DISPATCH();
 }
-do_OP_NOT: {
+do_OP_IMOD:
+  BINARY_OP_INT(%);
+  DISPATCH();
+do_OP_INEG: {
   Value val = vm_stack_pop(ctx);
-  // TODO: 处理 Truthy/Falsy 逻辑。Null 和 false 为假，其它待处理。
-  bool is_falsey =
-      (val.kind == VAL_NULL) || (val.kind == VAL_BOOL && !val.as.b);
-  Value res = MK_VAL_BOOL(is_falsey);
-  vm_stack_push(ctx, res);
+  vm_stack_push(ctx, MK_VAL_I32(-val.as.i32));
+  DISPATCH();
+}
+do_OP_IEQ: {
+  int b = vm_stack_pop(ctx).as.i32;
+  int a = vm_stack_pop(ctx).as.i32;
+  vm_stack_push(ctx, MK_VAL_BOOL(a == b));
+  DISPATCH();
+}
+do_OP_ILT: {
+  int b = vm_stack_pop(ctx).as.i32;
+  int a = vm_stack_pop(ctx).as.i32;
+  vm_stack_push(ctx, MK_VAL_BOOL(a < b));
+  DISPATCH();
+}
+
+// ==========================================
+// 浮点运算
+// ==========================================
+do_OP_FADD:
+  BINARY_OP_FLOAT(+);
+  DISPATCH();
+do_OP_FSUB:
+  BINARY_OP_FLOAT(-);
+  DISPATCH();
+do_OP_FMUL:
+  BINARY_OP_FLOAT(*);
+  DISPATCH();
+do_OP_FDIV:
+  BINARY_OP_FLOAT(/);
+  DISPATCH();
+do_OP_FMOD: {
+  double b = vm_stack_pop(ctx).as.f64;
+  double a = vm_stack_pop(ctx).as.f64;
+  vm_stack_push(ctx, MK_VAL_F64(fmod(a, b)));
+  DISPATCH();
+}
+do_OP_FNEG: {
+  Value val = vm_stack_pop(ctx);
+  vm_stack_push(ctx, MK_VAL_F64(-val.as.f64));
+  DISPATCH();
+}
+do_OP_FEQ: {
+  double b = vm_stack_pop(ctx).as.f64;
+  double a = vm_stack_pop(ctx).as.f64;
+  vm_stack_push(ctx, MK_VAL_BOOL(a == b));
+  DISPATCH();
+}
+do_OP_FLT: {
+  double b = vm_stack_pop(ctx).as.f64;
+  double a = vm_stack_pop(ctx).as.f64;
+  vm_stack_push(ctx, MK_VAL_BOOL(a < b));
+  DISPATCH();
+}
+
+// ==========================================
+// 布尔与对象运算
+// ==========================================
+do_OP_BNOT: {
+  // 编译器保证栈顶一定是 bool
+  bool b = vm_stack_pop(ctx).as.b;
+  vm_stack_push(ctx, MK_VAL_BOOL(!b));
+  DISPATCH();
+}
+do_OP_OEQ: {
+  // 比较对象指针是否相等
+  Object *b = vm_stack_pop(ctx).as.obj;
+  Object *a = vm_stack_pop(ctx).as.obj;
+  vm_stack_push(ctx, MK_VAL_BOOL(a == b));
   DISPATCH();
 }
 
 // --- 控制流 ---
-do_OP_RETURN: {
-  Value result = vm_stack_pop(ctx);
+do_OP_CALL: {
+  // 读取参数数量
+  uint8_t arg_count = READ_BYTE();
 
-  // TODO: 处理 CallFrame 的退栈逻辑
-  printf("Result: ");
-  if (result.kind == VAL_DOUBLE)
-    printf("%g\n", result.as.d);
-  else if (result.kind == VAL_INT)
-    printf("%d\n", result.as.i);
-  else if (result.kind == VAL_BOOL)
-    printf("%s\n", result.as.b ? "true" : "false");
-  else if (result.kind == VAL_NULL)
-    printf("null\n");
-  else
-    printf("<object %p>\n", (void *)result.as.obj);
+  // 拿到被调用的对象 (它在栈上的位置是：栈顶往下数 arg_count 个位置)
+  Value callee = vm_stack_peek(ctx, arg_count);
 
-  return INTERPRET_OK;
-}
-do_OP_MOD: {
-  Value rhs = vm_stack_pop(ctx);
-  Value lhs = vm_stack_pop(ctx);
-  if (vm_is_integer(rhs) && vm_is_integer(lhs)) {
-    vm_stack_push(ctx, MK_VAL_INT(lhs.as.i % rhs.as.i));
-  } else if (vm_is_double(lhs) && vm_is_double(rhs)) {
-    vm_stack_push(ctx, MK_VAL_DOUBLE(fmod(lhs.as.d, rhs.as.d)));
-  } else {
-    // todo: throw error
+  if (callee.kind != VAL_OBJ || callee.as.obj->kind != OBJ_CLOSURE) {
+    vm_fatal_error_abort("Can only call functions.");
+    return INTERPRET_RUNTIME_ERROR;
   }
+
+  ObjClosure *closure = (ObjClosure *)callee.as.obj;
+  if (arg_count != closure->function->arity) {
+    vm_fatal_error_abort("Expected %d arguments but got %d.",
+                         closure->function->arity, arg_count);
+    return INTERPRET_RUNTIME_ERROR;
+  }
+
+  if (ctx->frame_count >= ctx->frame_capacity) {
+    // todo: 扩容帧数组或抛出栈溢出异常
+    vm_fatal_error_abort("Call frame overflow.");
+  }
+
+  // 将当前的局部的 ip 同步到旧的 call frame 中
+  frame->ip = ip;
+
+  // 创建新的 CallFrame
+  CallFrame *new_frame = &ctx->frames[ctx->frame_count++];
+  new_frame->closure = closure;
+  new_frame->ip = closure->function->chunk.code;
+
+  // stack_base 指向 callee
+  // 所在的位置，这样不仅能访问参数，也能在后续清理时一把清空
+  new_frame->stack_base = ctx->sp - arg_count - 1;
+  new_frame->handler_count = 0;
+  new_frame->handlers = NULL;
+
+  // 切换局部寄存器缓存
+  frame = new_frame;
+  ip = frame->ip;
+
   DISPATCH();
 }
-  // ========================================================
-  // 以下指令尚未实现 (TODO 区)，暂时拦截避免 Crash
-  // ========================================================
+do_OP_RETURN: {
+  // 弹出函数的返回值
+  Value result = vm_stack_pop(ctx);
+
+  // 关闭当前函数的 Upvalues
+  vm_close_upvalues(ctx, ctx->stack + frame->stack_base);
+
+  // 恢复数据栈指针 (销毁该函数的所有局部变量、参数，以及栈底的 callee 自身)
+  ctx->sp = frame->stack_base;
+
+  // 销毁 CallFrame
+  ctx->frame_count--;
+
+  // 如果已经是处于最顶层（入口脚本）
+  if (ctx->frame_count == 0) {
+    // 脚本执行结束，可以选择打印最终返回值
+    return INTERPRET_OK;
+  }
+
+  // 将返回值压入上层函数的栈中，供上层继续使用
+  vm_stack_push(ctx, result);
+
+  // 恢复上一层 CallFrame 的寄存器上下文
+  frame = &ctx->frames[ctx->frame_count - 1];
+  ip = frame->ip;
+
+  DISPATCH();
+}
+// ========================================================
+// 以下指令尚未实现 (TODO 区)，暂时拦截避免 Crash
+// ========================================================
+do_OP_IINC:
+do_OP_IDEC:
+do_OP_INEQ:
+do_OP_IGT:
+do_OP_ILTE:
+do_OP_IGTE:
+do_OP_FINC:
+do_OP_FDEC:
+do_OP_FNEQ:
+do_OP_FGT:
+do_OP_FLTE:
+do_OP_FGTE:
+do_OP_BEQ:
+do_OP_BNEQ:
+do_OP_ONEQ:
 do_OP_GET_GLOBAL:
 do_OP_SET_GLOBAL:
 do_OP_GET_LOCAL:
@@ -941,7 +1086,6 @@ do_OP_IN:
 do_OP_JMP:
 do_OP_JMP_IF_FALSE:
 do_OP_LOOP:
-do_OP_CALL:
 do_OP_CLOSURE:
 do_OP_CLOSE_UPVALUE:
 do_OP_THROW:

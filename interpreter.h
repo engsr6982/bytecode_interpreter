@@ -1,120 +1,177 @@
-// 字节码解释器(栈机、C99、GC)
-//
-// 1. 数据类型
-//  1.1 值类型(拷贝传递)
-//      null  空值(对于声明的变量, 未赋值时默认为 null)
-//      void  无值(函数返回值) null != void
-//      bool  布尔值
-//      number  数值(int, double)
-//
-//  1.2 对象类型(引用传递)
-//      string  字符串(utf8)
-//      array  数组
-//      object  对象(键值对, key 为 string, value 为任意类型)
-//      function  函数
-//
-// 2. 关键字
-//  2.1 控制流
-//      if  条件语句
-//      else  条件语句
-//      continue  跳过本次循环
-//      return  返回值
-//      while  循环语句
-//      for  循环语句
-//      switch  选择语句
-//      case  选择语句
-//      break  跳出循环/选择语句
-//      try  异常处理
-//      catch  异常处理
-//      finally  异常处理
-//      throw  抛出异常
-//
-//  2.2 变量声明
-//      auto  自动推导变量
-//          const  常量修饰符(修饰 auto 变量, e.g. auto const a = 1)
-//      fn  函数声明
-//
-//  2.3 类型关键字
-//      null  空值类型
-//      number  数值类型
-//      bool  布尔类型
-//          false  布尔值 false
-//          true  布尔值 true
-//      string  字符串类型(使用 "" 声明字符串字面量)
-//      array  数组类型
-//      object  对象类型
-//      function  函数类型
-//
-//  2.4 操作符
-//      +  加法
-//      -  减法
-//      *  乘法
-//      /  除法
-//      %  取模
-//      <  小于
-//      >  大于
-//      <=  小于等于
-//      >=  大于等于
-//      ==  等于
-//      !=  不等于
-//      &&  逻辑与
-//      ||  逻辑或
-//      !  逻辑非
-//      =  赋值
-//      +=  加赋值
-//      -=  减赋值
-//      *=  乘赋值
-//      /=  除赋值
-//      %=  取模赋值
-//      ++  自增
-//      --  自减
-//      ()  函数调用
-//      []  数组/对象访问
-//      .  对象访问
-//      new  创建对象
-//      delete  删除对象
-//      typeof  获取类型
-//      instanceof  判断类型
-//      in  判断属性是否存在
-//      ... 展开运算符
-//      ?  三元运算符
-//      :  三元运算符
-//
-// 3. 作用域
-//  作用域决定了变量的可见性和生命周期
-//      全局作用域  全局变量
-//      局部作用域  函数内部变量
-//      块级作用域  {} 内部变量
-//      闭包作用域  函数内部定义的函数
-//
-// 4. 函数
-//  4.1 函数声明
-//      fn functionName(parameters): returnType { body }
-//      fn functionName(parameters) { body } // 返回值类型自动推导
-//      fn functionName(): fn(): void {
-//          fn doSomething() { body }
-//          return doSomething // 返回函数/闭包
-//      }
-//      fn functionName(...args): void { body } // 变长参数 (args 为 array)
-//
-//  4.2 函数调用
-//      functionName(parameters)
-//
-//  4.3 函数参数
-//      参数类型自动推导
-//      参数默认值
-//      参数解构
-//      参数展开
-//
-//  4.4 函数返回值
-//      return value
-//      return // 返回 void
-//
-// 5. 异常处理
-//  5.1 try-catch
-//      try { throw "t"; } catch (e) { body }
-//      try { body } catch (e) { body } finally { body }
-//
+/* ====================================
+ * 字节码解释器(栈机、C99、GC)
+ *   - 实现语言:     C99
+ *   - 虚拟机类型:   栈机
+ *   - 垃圾回收模型: 标记-清除(GC)
+ *   - 语言类型:     静态类型脚本语言
+ * ====================================
+ *
+ * 1. 关键字
+ *  1.1 控制流
+ *      if          条件语句
+ *      else        条件语句
+ *      continue    跳过本次循环
+ *      return      返回值
+ *      while       循环语句
+ *      for         循环语句
+ *      switch      选择语句
+ *      case        选择语句
+ *      break       跳出循环/选择语句
+ *      default     选择语句
+ *      try         异常处理
+ *      catch       异常处理
+ *      finally     异常处理
+ *      throw       抛出异常
+ *  1.2 变量声明
+ *      var         声明变量
+ *      const       声明常量
+ *      fn          声明函数
+ *  1.3 类型关键字
+ *      null        空值(对于声明的变量, 未赋值时默认为 null)
+ *      void        无返回值
+ *      bool        布尔类型
+ *      i32         32位整数
+ *      i64         64位整数
+ *      f32         32位浮点数
+ *      f64         64位浮点数
+ *      string      字符串类型
+ *      array<T>    泛型数组类型 (或者 [T])
+ *      map<K,V>    泛型字典类型
+ *      fn          函数类型
+ *  1.4 操作符
+ *      +           加法/拼接
+ *      -           减法
+ *      *           乘法
+ *      /           除法
+ *      %           取模
+ *      <           小于
+ *      >           大于
+ *      <=          小于等于
+ *      >=          大于等于
+ *      ==          等于
+ *      !=          不等于
+ *      &&          逻辑与
+ *      ||          逻辑或
+ *      !           逻辑非
+ *      =           赋值
+ *      +=          加赋值
+ *      -=          减赋值
+ *      *=          乘赋值
+ *      /=          除赋值
+ *      %=          取模赋值
+ *      ++          自增
+ *      --          自减
+ *      ()          函数调用
+ *      []          数组/对象访问
+ *      .           对象访问
+ *      ? :         三元运算符
+ *      new         创建对象
+ *      delete      删除 map 键值对
+ *      instanceof  判断类型
+ * 2. 数据类型
+ *  2.1 值类型(拷贝传递)
+ *      null        空值
+ *      void        无值
+ *      bool        布尔值
+ *      i32         32位整数
+ *      i64         64位整数
+ *      f32         32位浮点数
+ *      f64         64位浮点数
+ *  2.2 引用类型(引用传递)
+ *      string      字符串
+ *      array       数组
+ *      object      对象 // todo 保留?
+ *      fn          函数
+ *      map         字典
+ *  2.3 类型推导
+ *      var a = 1;  // i32
+ *      var b = 1.0; // f64
+ *      var c = "hello"; // string
+ *      var d = [1, 2, 3]; // array<i32>
+ *      var e = {a: 1, b: 2}; // map<i32, i32>
+ *      var f = fn() { return 1; }; // fn(): i32
+ * 3. 语法
+ *  3.1 语句
+ *      var a = 1; // 声明变量
+ *      a = 2; // 赋值
+ *      if (a == 2) { // 条件语句
+ *          print("a is 2");
+ *      } else {
+ *          print("a is not 2");
+ *      }
+ *      while (a < 10) { // 循环语句
+ *          print(a);
+ *          a = a + 1;
+ *      }
+ *      for (var i = 0; i < 10; i = i + 1) { // 循环语句
+ *          print(i);
+ *      }
+ *      switch (a) { // 选择语句
+ *          case 1:
+ *              print("a is 1");
+ *              break;
+ *          case 2:
+ *              print("a is 2");
+ *              break;
+ *          default:
+ *              print("a is not 1 or 2");
+ *              break;
+ *      }
+ *      try {
+ *          throw "error";
+ *      } catch (e) {
+ *          print(e);
+ *      } finally {
+ *          print("finally");
+ *      }
+ *  3.2 表达式
+ *      a + b // 加法
+ *      a - b // 减法
+ *      a * b // 乘法
+ *      a / b // 除法
+ *      a % b // 取模
+ *      a < b // 小于
+ *      a > b // 大于
+ *      a <= b // 小于等于
+ *      a >= b // 大于等于
+ *      a == b // 等于
+ *      a != b // 不等于
+ *      a && b // 逻辑与
+ *      a || b // 逻辑或
+ *      !a // 逻辑非
+ *      a = b // 赋值
+ *      a += b // 加赋值
+ *      a -= b // 减赋值
+ *      a *= b // 乘赋值
+ *      a /= b // 除赋值
+ *      a %= b // 取模赋值
+ *      a++ // 自增
+ *      a-- // 自减
+ *      a() // 函数调用
+ *      a[0] // 数组访问
+ *      a.b // 对象访问
+ *      a ? b : c // 三元运算符
+ *      new T() // 创建对象
+ *      delete a // 删除对象
+ *      a instanceof T // 判断类型
+ *  3.3 函数
+ *      fn add(a: i32, b: i32): i32 { // 声明函数
+ *          return a + b;
+ *      }
+ *      var add = fn(a: i32, b: i32): i32 { // 声明变量并赋值
+ *          return a + b;
+ *      }
+ *      var add = fn(a: i32, b: i32): i32 { // 声明变量并赋值
+ *          return a + b;
+ *      }(); // 立即执行
+ *      var counter = fn(): fn() -> i64 {
+ *          var count = 0;
+ *          return fn(): i64 {
+ *              count = count + 1;
+ *              return count;
+ *          };
+ *      }
+ */
 
 #pragma once
 
@@ -123,12 +180,14 @@
 #include <stdint.h>
 
 typedef enum {
-  VAL_NULL,   // 空值
-  VAL_VOID,   // 无值
-  VAL_BOOL,   // 布尔值
-  VAL_INT,    // 整数
-  VAL_DOUBLE, // 浮点数
-  VAL_OBJ,    // 对象(引用,指向堆上 Object)
+  VAL_NULL, // 空值
+  VAL_VOID, // 无值
+  VAL_BOOL, // 布尔值
+  VAL_I32,  // i32
+  VAL_I64,  // i64
+  VAL_F32,  // f32
+  VAL_F64,  // f64
+  VAL_OBJ,  // 对象(引用,指向堆上 Object)
 } ValueKind;
 
 typedef struct Object Object; // fwd
@@ -138,8 +197,10 @@ typedef struct Value {
 
   union {
     bool b;
-    int i;
-    double d;
+    int32_t i32;
+    int64_t i64;
+    float f32;
+    double f64;
     Object *obj;
   } as;
 } Value;
@@ -244,27 +305,46 @@ typedef enum {
   OP_GET_PROP,  // POP key, POP obj, 查找 obj[key] 压栈
   OP_SET_PROP,  // POP val, POP key, POP obj, 设置 obj[key] = val
 
-  // -- 算术与位运算 -- (全部为: b = POP(), a = POP(), PUSH(a OP b))
-  OP_ADD,    // a + b
-  OP_SUB,    // a - b
-  OP_MUL,    // a * b
-  OP_DIV,    // a / b
-  OP_MOD,    // a % b
-  OP_NEGATE, // a = POP(), PUSH(-a)
-  OP_INC,    // ++
-  OP_DEC,    // --
+  // 整数运算 (I = Integer)
+  OP_IADD,
+  OP_ISUB,
+  OP_IMUL,
+  OP_IDIV,
+  OP_IMOD,
+  OP_INEG,
+  OP_IINC,
+  OP_IDEC,
+  OP_IEQ,
+  OP_INEQ,
+  OP_ILT,
+  OP_IGT,
+  OP_ILTE,
+  OP_IGTE,
 
-  // -- 逻辑与比较 --
-  OP_EQ,         // a == b
-  OP_NEQ,        // a != b
-  OP_LT,         // a < b
-  OP_GT,         // a > b
-  OP_LTE,        // a <= b
-  OP_GTE,        // a >= b
-  OP_NOT,        // a = POP(), PUSH(!a)
-  OP_TYPEOF,     // a = POP(), PUSH(typeof a)
-  OP_INSTANCEOF, // a = POP(), b = POP(), PUSH(a instanceof b)
-  OP_IN,         // a = POP(), b = POP(), PUSH(a in b)
+  // 浮点数运算 (F = Float/Double)
+  OP_FADD,
+  OP_FSUB,
+  OP_FMUL,
+  OP_FDIV,
+  OP_FMOD,
+  OP_FNEG,
+  OP_FINC,
+  OP_FDEC,
+  OP_FEQ,
+  OP_FNEQ,
+  OP_FLT,
+  OP_FGT,
+  OP_FLTE,
+  OP_FGTE,
+
+  // 布尔运算 (B = Boolean)
+  OP_BEQ,
+  OP_BNEQ,
+  OP_BNOT,
+
+  // 对象/引用运算 (O = Object)
+  OP_OEQ,
+  OP_ONEQ, // 比较指针是否相等
 
   // -- 控制流 --
   OP_JMP,          // [offset] 无条件跳转 PC += offset
@@ -384,18 +464,25 @@ typedef struct Context {
 #define MK_VAL_VOID() ((Value){.kind = VAL_VOID})
 #define MK_VAL_NULL() ((Value){.kind = VAL_NULL})
 #define MK_VAL_BOOL(BOOL) ((Value){.kind = VAL_BOOL, .as.b = BOOL})
-#define MK_VAL_INT(I32) ((Value){.kind = VAL_INT, .as.i = I32})
-#define MK_VAL_DOUBLE(DOUBLE) ((Value){.kind = VAL_DOUBLE, .as.d = DOUBLE})
+#define MK_VAL_I32(V) ((Value){.kind = VAL_I32, .as.i32 = (V)})
+#define MK_VAL_I64(V) ((Value){.kind = VAL_I64, .as.i64 = (V)})
+#define MK_VAL_F32(V) ((Value){.kind = VAL_F32, .as.f32 = (V)})
+#define MK_VAL_F64(V) ((Value){.kind = VAL_F64, .as.f64 = (V)})
 #define MK_VAL_OBJ(OBJ_PTR)                                                    \
   ((Value){.kind = VAL_OBJ, .as.obj = (Object *)(OBJ_PTR)})
 
-bool vm_is_void(Value val) { return val.kind == VAL_VOID; }
-bool vm_is_null(Value val) { return val.kind == VAL_NULL; }
-bool vm_is_bool(Value val) { return val.kind == VAL_BOOL; }
-bool vm_is_integer(Value val) { return val.kind == VAL_INT; }
-bool vm_is_double(Value val) { return val.kind == VAL_DOUBLE; }
-bool vm_is_number(Value val) {
-  return val.kind == VAL_INT || val.kind == VAL_DOUBLE;
+inline bool vm_is_void(Value val) { return val.kind == VAL_VOID; }
+inline bool vm_is_null(Value val) { return val.kind == VAL_NULL; }
+inline bool vm_is_bool(Value val) { return val.kind == VAL_BOOL; }
+inline bool vm_is_i32(Value val) { return val.kind == VAL_I32; }
+inline bool vm_is_i64(Value val) { return val.kind == VAL_I64; }
+inline bool vm_is_f32(Value val) { return val.kind == VAL_F32; }
+inline bool vm_is_f64(Value val) { return val.kind == VAL_F64; }
+inline bool vm_is_integer(Value val) {
+  return val.kind == VAL_I32 || val.kind == VAL_I64;
+}
+inline bool vm_is_floating(Value val) {
+  return val.kind == VAL_F32 || val.kind == VAL_F64;
 }
 
 void vm_fatal_error_abort(const char *fmt, ...);
